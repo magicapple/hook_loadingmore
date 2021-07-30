@@ -18,31 +18,54 @@ const getStateText = (isLoading, isError, isEnd) => {
   return "";
 };
 
-export default function App() {
+const useObserver = (callback) => {
   const domRef = useRef(null);
   const unbindRef = useRef(null);
   const ob = useRef(createObserver());
+
+  useEffect(() => {
+    const { event, observer } = ob.current;
+    const dom = domRef.current;
+    unbindRef.current = event.on("lazyload", (target) => {
+      if (domRef.current === target) {
+        callback();
+      }
+    });
+    observer.observe(dom);
+
+    return () => {
+      unbindRef.current();
+      observer.unobserve(dom);
+    };
+  }, [callback]);
+
+  return [domRef];
+};
+
+const useFetch = (keyWord, currentPage, pageSize, fetcher) => {
   const keywordRef = useRef("");
-  const pageSizeRef = useRef(3);
-  const [keyWord, setKeyWord] = useState("");
-  const [currentPage, setCurrentPage] = useState(0);
+  const [list, setList] = useState([]);
   const [isLoading, changeLoadingState] = useState(false);
   const [isError, changeErrorState] = useState(false);
   const [isEnd, changeEndState] = useState(false);
-  const [list, setList] = useState([]);
 
   const fetchData = useCallback(async () => {
+    keywordRef.current = keyWord;
     if (currentPage === 0 || keyWord === "") {
+      changeLoadingState(false);
+      changeEndState(false);
+      changeErrorState(false);
       return;
     }
     changeLoadingState(true);
+    changeEndState(false);
     changeErrorState(false);
     try {
-      const data = await getData(keyWord, currentPage, pageSizeRef.current);
+      const data = await fetcher(keyWord, currentPage, pageSize);
 
       if (keyWord === keywordRef.current) {
         setList((list) => [...list, ...data]);
-        if (data.length < pageSizeRef.current) {
+        if (data.length < pageSize) {
           changeEndState(true);
         }
       }
@@ -54,14 +77,37 @@ export default function App() {
     if (keyWord === keywordRef.current) {
       changeLoadingState(false);
     }
-  }, [keyWord, currentPage]);
+  }, [keyWord, currentPage, pageSize, fetcher]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    setList([]);
+  }, [keyWord]);
+
+  return [list, isLoading, isError, isEnd, fetchData];
+};
+
+export default function App() {
+  const [pageSize] = useState(3);
+  const [keyWord, setKeyWord] = useState("");
+  const [currentPage, setCurrentPage] = useState(0);
+
+  const [list, isLoading, isError, isEnd, retry] = useFetch(
+    keyWord,
+    currentPage,
+    pageSize,
+    getData
+  );
 
   const handleRetryClick = useCallback(() => {
     console.log("handleClick trigger");
     if (isError) {
-      fetchData();
+      retry();
     }
-  }, [fetchData, isError]);
+  }, [retry, isError]);
 
   const handleLoading = useCallback(() => {
     console.log("handleClick trigger");
@@ -70,25 +116,7 @@ export default function App() {
     }
   }, [isLoading, isError, isEnd]);
 
-  useEffect(() => {
-    const { event, observer } = ob.current;
-    const dom = domRef.current;
-    unbindRef.current = event.on("lazyload", (target) => {
-      if (domRef.current === target) {
-        handleLoading();
-      }
-    });
-    observer.observe(dom);
-
-    return () => {
-      unbindRef.current();
-      observer.unobserve(dom);
-    };
-  }, [handleLoading]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  const [domRef] = useObserver(handleLoading);
 
   // useCallback 只能放入内联元素，如果需要对函数进行高阶函数的封装，可以有两种方法：
   // 1. 使用匿名函数进行包装，然后再调用
@@ -120,14 +148,10 @@ export default function App() {
   // 2. 使用useMemo对高阶函数进行封装，这个方案推荐的人比较多，不过要额外多封装一个函数。
   const changeKeyWord = useCallback((event) => {
     setKeyWord(event.target.value);
-    keywordRef.current = event.target.value;
     setCurrentPage(1);
-    changeEndState(false);
-    changeErrorState(false);
-    setList([]);
   }, []);
 
-  const handleChange = useMemo(() => _.debounce(changeKeyWord, 500), [
+  const handleChange = useMemo(() => _.debounce(changeKeyWord, 10), [
     changeKeyWord
   ]);
 
