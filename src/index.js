@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import ReactDOM from "react-dom";
 
-import App from "./SearchListNormal";
+import App from "./SearchListSWR/";
 
 const rootElement = document.getElementById("root");
 ReactDOM.render(
