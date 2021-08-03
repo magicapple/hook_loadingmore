@@ -1,22 +1,27 @@
 import "./styles.css";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { unstable_batchedUpdates } from "react-dom";
 import getData from "../api/getData1";
 import createObserver from "../lib/createObserver";
 import _ from "lodash";
-import useSWR, { createCache } from "swr";
+import { useSWRInfinite } from "swr";
 
-const getStateText = (isLoading, isError, isEnd, keyword) => {
-  if (!keyword) {
+const getStateText = (
+  isLoadingInitialData,
+  isLoadingMore,
+  isError,
+  isReachingEnd,
+  isRefreshing
+) => {
+  if (isLoadingInitialData) {
     return "";
-  }
-  if (isLoading) {
-    return "数据加载中...";
   }
   if (isError) {
     return "加载失败，点击重试";
   }
-  if (isEnd) {
+  if (isLoadingMore || isRefreshing) {
+    return "数据加载中...";
+  }
+  if (isReachingEnd) {
     return "没有更多数据了";
   }
   return "";
@@ -47,67 +52,70 @@ const useObserver = (callback) => {
   return [domRef];
 };
 
-const isLoading = (data, error) => !(data || error);
-const isError = (error) => !!error;
-const isEnd = (data, pageSize) => data && data.length < pageSize;
-
 export default function App() {
-  const [list, setList] = useState([]);
   const [keyword, setKeyword] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(3);
-  // 对cache进行管理，用于避免swr缓存产生的问题。
-  const [cache, setCache] = useState(createCache(new Map()).cache);
 
-  const { data, error, mutate } = useSWR(
-    keyword !== "" ? [keyword, currentPage, pageSize] : null,
+  // todo 对于参数判断这块，在有cache的情况下，会出现返回data格式不符合预期的问题。
+  const { data, error, size, setSize, isValidating } = useSWRInfinite(
+    (index) => [keyword, index + 1, pageSize],
     getData,
     {
       onErrorRetry: () => {
         return;
       }, // 重新定义重试处理函数，关闭swr的错误重试
       revalidateOnFocus: false, // 关闭窗口聚焦时自动重新验证
-      revalidateOnReconnect: false, // 浏览器恢复网络连接时自动重新验证
-      cache
+      revalidateOnReconnect: false // 浏览器恢复网络连接时自动重新验证
+      // persistSize: true
     }
+  );
+  console.log("data-->", data, error, size, isValidating);
+  const list = data ? [].concat(...data) : [];
+  const isLoadingInitialData = !data && !error;
+  const isLoadingMore =
+    isLoadingInitialData ||
+    (size > 0 && data && typeof data[size - 1] === "undefined");
+  const isEmpty = data?.[0]?.length === 0;
+  const isError = !!error;
+  const isReachingEnd =
+    isEmpty || (data && data[data.length - 1]?.length < pageSize);
+  const isRefreshing = isValidating && data && data.length === size;
+
+  console.log(
+    "state==>",
+    isLoadingInitialData,
+    isLoadingMore,
+    isEmpty,
+    isError,
+    isReachingEnd,
+    isRefreshing
   );
 
   const handleRetryClick = useCallback(() => {
-    if (isError(error)) {
-      mutate(""); // 不赋值的话，无法触发重新渲染，刷新不了loading状态
+    if (isError) {
+      setSize(size);
     }
-  }, [mutate, error]);
+  }, [isError, setSize, size]);
 
   const handleLoading = useCallback(() => {
-    if (!isLoading(data, error) && !isError(error) && !isEnd(data, pageSize)) {
-      setCurrentPage((page) => page + 1);
+    if (!isLoadingInitialData && !isLoadingMore && !isError && !isReachingEnd) {
+      setSize((size) => size + 1);
     }
-  }, [data, error, pageSize]);
+  }, [isLoadingInitialData, isLoadingMore, isError, isReachingEnd, setSize]);
 
   const [domRef] = useObserver(handleLoading);
 
-  const changeKeyWord = useCallback((event) => {
-    // 注意：这个地方顺序不对会导致各种问题，没想到每个useState是单独渲染的，
-    // unstable_batchedUpdates 可以规定内部的代码执行完后再进行渲染。
-    unstable_batchedUpdates(() => {
+  const changeKeyWord = useCallback(
+    (event) => {
       setKeyword(event.target.value);
-      setList([]);
-      // 关键词变更的时候，重新创建一个缓存，用于清除掉以前的缓存，避免冲突。
-      setCache(createCache(new Map()).cache);
-      setCurrentPage(1);
-    });
-  }, []);
+      setSize(1);
+    },
+    [setSize]
+  );
 
   const handleChange = useMemo(() => _.debounce(changeKeyWord, 10), [
     changeKeyWord
   ]);
-  useEffect(() => {
-    if (data) {
-      setList((list) => {
-        return [...list, ...data];
-      });
-    }
-  }, [data]);
 
   return (
     <div className="App">
@@ -128,10 +136,11 @@ export default function App() {
         style={{ width: 200, margin: "10px auto" }}
       >
         {getStateText(
-          isLoading(data, error),
-          isError(error),
-          isEnd(data, pageSize),
-          keyword
+          isLoadingInitialData,
+          isLoadingMore,
+          isError,
+          isReachingEnd,
+          isRefreshing
         )}
       </div>
     </div>

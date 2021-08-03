@@ -5,7 +5,7 @@ const getData = (keyWord = "", current = 1, pageSize = 3, delay = 500) => {
   return new Promise((resolve, reject) => {
     console.log("getData begin", keyWord, current);
     setTimeout(() => {
-      // if (Math.random() > 0.5) {
+      // if (Math.random() > 0.7) {
       //   console.log("reject error");
       //   reject("error");
       //   return;
